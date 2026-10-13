@@ -15,11 +15,7 @@ class PredictionHistoryChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DatabaseEvent>(
-      stream: realtimeDatabaseService
-          .predictionHistoryRef(deviceId)
-          .orderByChild('timestamp')
-          .limitToLast(20)
-          .onValue,
+      stream: realtimeDatabaseService.predictionHistoryStream(deviceId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Card(
@@ -39,7 +35,7 @@ class PredictionHistoryChart extends StatelessWidget {
                   SizedBox(height: 8),
                   Text(
                     'Unable to load prediction history. '
-                        'Check your internet connection and try again.',
+                    'Check your internet connection and try again.',
                     style: TextStyle(color: AppColors.textLight, height: 1.4),
                   ),
                 ],
@@ -52,23 +48,21 @@ class PredictionHistoryChart extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
-        final raw = Map<String, dynamic>.from(
-          snapshot.data!.snapshot.value as Map,
-        );
+        final raw = readRtdbMap(snapshot.data?.snapshot.value);
 
         final entries =
-        raw.entries.where((entry) => entry.value is Map).toList()
-          ..sort((a, b) {
-            final aValue = Map<String, dynamic>.from(a.value as Map);
+            raw.entries.where((entry) => entry.value is Map).toList()
+              ..sort((a, b) {
+                final aValue = Map<String, dynamic>.from(a.value as Map);
 
-            final bValue = Map<String, dynamic>.from(b.value as Map);
+                final bValue = Map<String, dynamic>.from(b.value as Map);
 
-            final aTime = readRtdbInt(aValue, 'timestamp') ?? 0;
+                final aTime = readRtdbInt(aValue, 'timestamp') ?? 0;
 
-            final bTime = readRtdbInt(bValue, 'timestamp') ?? 0;
+                final bTime = readRtdbInt(bValue, 'timestamp') ?? 0;
 
-            return aTime.compareTo(bTime);
-          });
+                return aTime.compareTo(bTime);
+              });
 
         final points = <PredictionHistoryPoint>[];
 
@@ -187,10 +181,10 @@ class PredictionHistoryChart extends StatelessWidget {
                           spots: points
                               .map(
                                 (e) => FlSpot(
-                              e.index,
-                              e.riskScore.clamp(0, 18).toDouble(),
-                            ),
-                          )
+                                  e.index,
+                                  e.riskScore.clamp(0, 18).toDouble(),
+                                ),
+                              )
                               .toList(),
                           isCurved: true,
                           curveSmoothness: 0.25,

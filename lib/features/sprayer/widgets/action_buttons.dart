@@ -10,7 +10,6 @@ class ActionButtons extends StatelessWidget {
     required this.cooldownActive,
     required this.onManualSpray,
     required this.onTestSprayer,
-    required this.onStop,
     required this.onResetSystem,
   });
 
@@ -22,7 +21,6 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback? onManualSpray;
   final VoidCallback? onTestSprayer;
 
-  final VoidCallback? onStop;
   final VoidCallback? onResetSystem;
 
   @override
@@ -76,15 +74,6 @@ class ActionButtons extends StatelessWidget {
         ),
 
         const SizedBox(height: 10),
-
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
-
-          onPressed: isEmergencyStop ? null : onStop,
-
-          icon: const Icon(Icons.stop_circle_outlined),
-          label: const Text('Emergency Stop'),
-        ),
       ],
     );
   }

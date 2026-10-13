@@ -1,17 +1,14 @@
+import '../../../core/utils/rtdb_value_parser.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/realtime_database_service.dart';
 
 class SprayerActivityTimeline extends StatelessWidget {
-  SprayerActivityTimeline({
-    super.key,
-    required this.deviceId});
+  SprayerActivityTimeline({super.key, required this.deviceId});
 
   final String deviceId;
-
-  final RealtimeDatabaseService realtimeDatabaseService =
-  RealtimeDatabaseService();
 
   String commandLabel(String command) {
     switch (command) {
@@ -71,16 +68,17 @@ class SprayerActivityTimeline extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
-        final raw = Map<String, dynamic>.from(
-          snapshot.data!.snapshot.value as Map,
-        );
+        final raw = readRtdbMap(snapshot.data?.snapshot.value);
 
-        final entries = raw.entries.toList()
-          ..sort((a, b) {
-            final aTime = a.value['createdAt'] ?? 0;
-            final bTime = b.value['createdAt'] ?? 0;
-            return bTime.compareTo(aTime);
-          });
+        final entries =
+            raw.entries.where((entry) => entry.value is Map).toList()..sort((
+              a,
+              b,
+            ) {
+              final aTime = readRtdbInt(readRtdbMap(a.value), 'createdAt') ?? 0;
+              final bTime = readRtdbInt(readRtdbMap(b.value), 'createdAt') ?? 0;
+              return bTime.compareTo(aTime);
+            });
 
         final latest = entries.take(5).toList();
 
@@ -101,10 +99,13 @@ class SprayerActivityTimeline extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 ...latest.map((entry) {
-                  final data = Map<String, dynamic>.from(entry.value);
-                  final command = data['command'] ?? 'UNKNOWN';
-                  final status = data['status'] ?? 'PENDING';
-                  final trigger = data['trigger'] ?? 'SYSTEM';
+                  final data = readRtdbMap(entry.value);
+                  final command =
+                      readRtdbUpperString(data, 'command') ?? 'UNKNOWN';
+                  final status =
+                      readRtdbUpperString(data, 'status') ?? 'UNKNOWN';
+                  final trigger =
+                      readRtdbUpperString(data, 'trigger') ?? 'SYSTEM';
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),

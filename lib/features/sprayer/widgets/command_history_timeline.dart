@@ -1,3 +1,5 @@
+import '../../../core/utils/rtdb_value_parser.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
@@ -5,12 +7,9 @@ import '../../../core/services/realtime_database_service.dart';
 import 'info_row.dart';
 
 class CommandHistoryTimeline extends StatelessWidget {
-  CommandHistoryTimeline({ super.key, required this.deviceId});
+  CommandHistoryTimeline({super.key, required this.deviceId});
 
   final String deviceId;
-
-  final RealtimeDatabaseService realtimeDatabaseService =
-  RealtimeDatabaseService();
 
   String commandLabel(String command) {
     switch (command) {
@@ -55,16 +54,17 @@ class CommandHistoryTimeline extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
-        final rawData = Map<String, dynamic>.from(
-          snapshot.data!.snapshot.value as Map,
-        );
+        final rawData = readRtdbMap(snapshot.data?.snapshot.value);
 
-        final commands = rawData.entries.toList()
-          ..sort((a, b) {
-            final aTime = a.value['createdAt'] ?? 0;
-            final bTime = b.value['createdAt'] ?? 0;
-            return bTime.compareTo(aTime);
-          });
+        final commands =
+            rawData.entries.where((entry) => entry.value is Map).toList()
+              ..sort((a, b) {
+                final aTime =
+                    readRtdbInt(readRtdbMap(a.value), 'createdAt') ?? 0;
+                final bTime =
+                    readRtdbInt(readRtdbMap(b.value), 'createdAt') ?? 0;
+                return bTime.compareTo(aTime);
+              });
 
         final recentCommands = commands.take(3).toList();
 
@@ -85,9 +85,11 @@ class CommandHistoryTimeline extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 ...recentCommands.map((entry) {
-                  final data = Map<String, dynamic>.from(entry.value);
-                  final command = data['command'] ?? 'UNKNOWN';
-                  final status = data['status'] ?? 'UNKNOWN';
+                  final data = readRtdbMap(entry.value);
+                  final command =
+                      readRtdbUpperString(data, 'command') ?? 'UNKNOWN';
+                  final status =
+                      readRtdbUpperString(data, 'status') ?? 'UNKNOWN';
                   final result = data['result'] ?? '';
 
                   return Padding(

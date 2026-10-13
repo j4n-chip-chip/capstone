@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'dart:async';
-import '../../core/services/firestore_service.dart';
+
 import '../../core/constants/app_colors.dart';
 import '../../core/services/realtime_database_service.dart';
 import '../../core/utils/device_heartbeat.dart';
+import '../../core/utils/rtdb_value_parser.dart';
+import '../../core/utils/sprayer_safety.dart';
 
 import 'widgets/sprayer_status_card.dart';
 import 'widgets/spray_settings_card.dart';
@@ -29,41 +31,84 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
   Timer? heartbeatCheckTimer;
   Map<String, dynamic> latestHeartbeatData = {};
 
-  late Future<String?> authorizedDeviceIdFuture;
+  late Stream<String?> authorizedDeviceIdStream;
 
   int cycles = 1;
   int durationSec = 45;
-  bool safetyChecklistCompleted = false;
+  String latestDeviceId = '';
+  bool appConnected = false;
+  bool commandStateKnown = false;
+  bool commandInFlight = false;
+  bool stopInFlight = false;
+  bool settingsInFlight = false;
+  Map<String, dynamic> latestStatusData = {};
+  Map<String, dynamic> latestActiveCommand = {};
 
-  String formatLastHeartbeat(Map<String, dynamic> heartbeatData) {
-    final lastHeartbeat = heartbeatData['lastHeartbeat'];
+  String formatLastHeartbeat(Map<String, dynamic> data) =>
+      formatHeartbeatValue(data['lastHeartbeat']);
 
-    if (lastHeartbeat is! num) {
-      return 'Unavailable';
-    }
-
-    final dateTime = DateTime.fromMillisecondsSinceEpoch(
-      lastHeartbeat.toInt(),
-    ).toLocal();
-
-    final hour = dateTime.hour % 12 == 0 ? 12 : dateTime.hour % 12;
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-
-    return 'Last heartbeat: $hour:$minute $period';
-  }
-
-  bool canSendSprayerCommand() {
-    return isDeviceHeartbeatAlive(latestHeartbeatData);
-  }
-
-  void showOfflineCommandBlockedMessage() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Command cancelled. The farm device is offline.'),
-        backgroundColor: AppColors.danger,
+  Future<void> submitCommand(String deviceId, Map<String, dynamic> data) async {
+    final command = data['command'] as String;
+    final stop = command == 'EMERGENCY_STOP';
+    if ((stop && stopInFlight) || (!stop && commandInFlight)) return;
+    final reason = sprayerCommandBlockReason(
+      command: command,
+      connected: appConnected,
+      heartbeatAlive: isDeviceHeartbeatAlive(
+        latestHeartbeatData,
+        deviceId: deviceId,
       ),
+      status: latestStatusData,
+      activeCommand: latestActiveCommand,
+      commandStateKnown: commandStateKnown,
     );
+    if (reason != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(reason)));
+      return;
+    }
+    setState(() {
+      if (stop) {
+        stopInFlight = true;
+      } else {
+        commandInFlight = true;
+      }
+    });
+    try {
+      await realtimeDatabaseService.sendCommand(
+        deviceId: deviceId,
+        commandData: data,
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Command sent. Waiting for the farm device to confirm.',
+            ),
+          ),
+        );
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is TimeoutException || error is StateError
+                  ? error.toString()
+                  : 'Unable to send the command. Check your connection and device access.',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+    } finally {
+      if (mounted)
+        setState(() {
+          if (stop) {
+            stopInFlight = false;
+          } else {
+            commandInFlight = false;
+          }
+        });
+    }
   }
 
   void showSafetyChecklistDialog(BuildContext context, String deviceId) {
@@ -150,9 +195,9 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
                   onPressed: () {
                     final allChecked =
                         tankFilled &&
-                            noPeopleNearby &&
-                            pumpChecked &&
-                            correctMixture;
+                        noPeopleNearby &&
+                        pumpChecked &&
+                        correctMixture;
 
                     if (!allChecked) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -180,75 +225,36 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
     );
   }
 
-  Future<void> resetSystem(String deviceId) async {
-    if (!isDeviceHeartbeatAlive(latestHeartbeatData)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Command cancelled. The farm device is offline.'),
-          backgroundColor: AppColors.danger,
-        ),
-      );
-      return;
-    }
+  Future<void> resetSystem(String deviceId) => submitCommand(deviceId, {
+    'command': 'RESET_SYSTEM',
+    'trigger': 'MANUAL',
+    'cycles': 0,
+    'durationSec': 0,
+  });
 
-    await realtimeDatabaseService.sendCommand(
-      deviceId: deviceId,
-      commandData: {
-        'command': 'RESET_SYSTEM',
-        'trigger': 'manual',
-        'cycles': 0,
-        'durationSec': 0,
-      },
-    );
-  }
+  Future<void> startManualSpray(String deviceId) => submitCommand(deviceId, {
+    'command': 'START_SPRAY',
+    'trigger': 'MANUAL',
+    'cycles': cycles,
+    'durationSec': durationSec,
+  });
 
-  Future<void> startManualSpray(String deviceId) async {
-    if (!canSendSprayerCommand()) {
-      showOfflineCommandBlockedMessage();
-      return;
-    }
-
-    await realtimeDatabaseService.sendCommand(
-      deviceId: deviceId,
-      commandData: {
-        'command': 'START_SPRAY',
-        'trigger': 'MANUAL',
-        'cycles': cycles,
-        'durationSec': durationSec,
-      },
-    );
-  }
-
-  Future<void> testSprayer(String deviceId) async {
-    if (!isDeviceHeartbeatAlive(latestHeartbeatData)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Command cancelled. The farm device is offline.'),
-          backgroundColor: AppColors.danger,
-        ),
-      );
-      return;
-    }
-    await realtimeDatabaseService.sendCommand(
-      deviceId: deviceId,
-      commandData: {
-        'command': 'TEST_SPRAYER',
-        'trigger': 'TEST',
-        'cycles': 1,
-        'durationSec': 3,
-      },
-    );
-  }
+  Future<void> testSprayer(String deviceId) => submitCommand(deviceId, {
+    'command': 'TEST_SPRAYER',
+    'trigger': 'TEST',
+    'cycles': 1,
+    'durationSec': 3,
+  });
 
   Future<void> confirmEmergencyStop(String deviceId) async {
-    showDialog(
+    await showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('Emergency Stop'),
 
           content: const Text(
-            'This will immediately stop the pump and override all spraying operations.',
+            'Request an emergency stop. Check that the farm device confirms the stop before approaching the sprayer.',
           ),
 
           actions: [
@@ -265,13 +271,10 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
               onPressed: () async {
                 Navigator.pop(context);
 
-                await realtimeDatabaseService.sendCommand(
-                  deviceId: deviceId,
-                  commandData: {
-                    'command': 'EMERGENCY_STOP',
-                    'trigger': 'MANUAL',
-                  },
-                );
+                await submitCommand(deviceId, {
+                  'command': 'EMERGENCY_STOP',
+                  'trigger': 'MANUAL',
+                });
               },
 
               child: const Text('Stop Now'),
@@ -288,9 +291,9 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
 
     final user = FirebaseAuth.instance.currentUser;
 
-    authorizedDeviceIdFuture = user == null
-        ? Future.value(null)
-        : realtimeDatabaseService.getAuthorizedDeviceId(user.uid);
+    authorizedDeviceIdStream = user == null
+        ? Stream.value(null)
+        : realtimeDatabaseService.authorizedDeviceIdStream(user.uid);
 
     heartbeatCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) {
@@ -307,23 +310,25 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
+    if (FirebaseAuth.instance.currentUser == null) {
       return const Scaffold(body: Center(child: Text('No user logged in.')));
     }
+    return StreamBuilder<String?>(
+      stream: authorizedDeviceIdStream,
+      builder: (context, deviceSnapshot) {
+        if (deviceSnapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: firestoreService.userStream(user.uid),
-      builder: (context, userSnapshot) {
-        if (userSnapshot.hasError) {
+        if (deviceSnapshot.hasError) {
           return const Scaffold(
             body: Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'Unable to load your account information. '
-                      'Check your internet connection and try again.',
+                  'Unable to verify your assigned device.',
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -331,449 +336,500 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
           );
         }
 
-        if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+        final deviceId = deviceSnapshot.data ?? '';
+
+        if (deviceId.isEmpty) {
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+            body: Center(
+              child: Text(
+                'No authorized BananaDoctor device is assigned to this account.',
+                textAlign: TextAlign.center,
+              ),
+            ),
           );
         }
 
-        return FutureBuilder<String?>(
-          future: authorizedDeviceIdFuture,
-          builder: (context, deviceSnapshot) {
-            if (deviceSnapshot.connectionState == ConnectionState.waiting) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-
-            if (deviceSnapshot.hasError) {
-              return const Scaffold(
-                body: Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'Unable to verify your assigned device.',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              );
-            }
-
-            final deviceId = deviceSnapshot.data ?? '';
-
-            if (deviceId.isEmpty) {
-              return const Scaffold(
-                body: Center(
-                  child: Text(
-                    'No authorized BananaDoctor device is assigned to this account.',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              );
-            }
-
-            return StreamBuilder(
-              stream: realtimeDatabaseService.heartbeatStream(deviceId),
-              builder: (context, heartbeatSnapshot) {
-                if (heartbeatSnapshot.hasError) {
-                  return const Scaffold(
-                    body: Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text(
-                          'Unable to check the farm device connection. '
-                              'Check your internet connection and try again.',
-                          textAlign: TextAlign.center,
+        if (latestDeviceId != deviceId) {
+          latestDeviceId = deviceId;
+          latestHeartbeatData = {};
+          latestStatusData = {};
+          latestActiveCommand = {};
+          commandStateKnown = false;
+        }
+        return Scaffold(
+          floatingActionButton: FloatingActionButton.extended(
+            backgroundColor: AppColors.danger,
+            foregroundColor: Colors.white,
+            onPressed: stopInFlight
+                ? null
+                : () => confirmEmergencyStop(deviceId),
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('Emergency Stop'),
+          ),
+          body: StreamBuilder(
+            stream: realtimeDatabaseService.connectionStream,
+            builder: (context, connectionSnapshot) {
+              appConnected = connectionSnapshot.data?.snapshot.value == true;
+              return StreamBuilder(
+                stream: realtimeDatabaseService.heartbeatStream(deviceId),
+                builder: (context, heartbeatSnapshot) {
+                  if (heartbeatSnapshot.hasError) {
+                    return const Scaffold(
+                      body: Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'Unable to check the farm device connection. '
+                            'Check your internet connection and try again.',
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                }
-
-                if (!heartbeatSnapshot.hasData ||
-                    heartbeatSnapshot.data!.snapshot.value == null) {
-                  return const Scaffold(
-                    body: Center(child: CircularProgressIndicator()),
-                  );
-                }
-
-                final heartbeatData = Map<String, dynamic>.from(
-                  heartbeatSnapshot.data!.snapshot.value as Map,
-                );
-
-                latestHeartbeatData = heartbeatData;
-
-                final deviceOnline = isDeviceHeartbeatAlive(heartbeatData);
-
-                final lastHeartbeat = formatLastHeartbeat(heartbeatData);
-
-                return StreamBuilder(
-                  stream: realtimeDatabaseService.statusRef(deviceId).onValue,
-
-                  builder: (context, statusSnapshot) {
-                    if (statusSnapshot.hasError) {
-                      return const Scaffold(
-                        body: Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text(
-                              'Unable to load the farm device status. '
-                                  'Check your internet connection and try again.',
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-
-                    if (!statusSnapshot.hasData ||
-                        statusSnapshot.data!.snapshot.value == null) {
-                      return const Scaffold(
-                        body: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-
-                    final statusData = Map<String, dynamic>.from(
-                      statusSnapshot.data!.snapshot.value as Map,
                     );
+                  }
 
-                    final cooldownActive = statusData['cooldownActive'] == true;
+                  if (heartbeatSnapshot.connectionState ==
+                      ConnectionState.waiting) {
+                    return const Scaffold(
+                      body: Center(child: CircularProgressIndicator()),
+                    );
+                  }
 
-                    final cooldownRemainingSec =
-                        statusData['cooldownRemainingSec'] ?? 0;
+                  final heartbeatData = readRtdbMap(
+                    heartbeatSnapshot.data?.snapshot.value,
+                  );
 
-                    final esp32Status = statusData['esp32Status'] ?? 'UNKNOWN';
+                  latestHeartbeatData = heartbeatData;
 
-                    final currentSprayCycle =
-                        (statusData['currentSprayCycle'] as num?)?.toInt() ?? 0;
+                  final deviceOnline = isDeviceHeartbeatAlive(
+                    heartbeatData,
+                    deviceId: deviceId,
+                  );
 
-                    final totalSprayCycles =
-                        (statusData['totalSprayCycles'] as num?)?.toInt() ?? 0;
+                  final lastHeartbeat = formatLastHeartbeat(heartbeatData);
 
-                    final sprayCycleRemainingSec =
-                        (statusData['sprayCycleRemainingSec'] as num?)
-                            ?.toInt() ??
-                            0;
+                  return StreamBuilder(
+                    stream: realtimeDatabaseService.statusStream(deviceId),
 
-                    final sprayTrigger = (statusData['sprayTrigger'] ?? 'NONE')
-                        .toString()
-                        .toUpperCase();
-
-                    return StreamBuilder(
-                      stream: realtimeDatabaseService.settingsStream(deviceId),
-                      builder: (context, settingsSnapshot) {
-                        if (settingsSnapshot.hasError) {
-                          return const Scaffold(
-                            body: Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(24),
-                                child: Text(
-                                  'Unable to load sprayer settings. '
-                                      'Check your internet connection and try again.',
-                                  textAlign: TextAlign.center,
-                                ),
+                    builder: (context, statusSnapshot) {
+                      if (statusSnapshot.hasError) {
+                        return const Scaffold(
+                          body: Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text(
+                                'Unable to load the farm device status. '
+                                'Check your internet connection and try again.',
+                                textAlign: TextAlign.center,
                               ),
                             ),
-                          );
-                        }
-
-                        if (!settingsSnapshot.hasData) {
-                          return const Scaffold(
-                            body: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-
-                        final settingsData =
-                            settingsSnapshot.data?.snapshot.value;
-
-                        final settings = settingsData is Map
-                            ? Map<String, dynamic>.from(settingsData)
-                            : <String, dynamic>{};
-
-                        final autoMode = settings['autoMode'] == true;
-
-                        return StreamBuilder(
-                          stream: realtimeDatabaseService.activeCommandStream(
-                            deviceId,
                           ),
+                        );
+                      }
 
-                          builder: (context, commandSnapshot) {
-                            if (commandSnapshot.hasError) {
-                              return const Scaffold(
-                                body: Center(
-                                  child: Padding(
-                                    padding: EdgeInsets.all(24),
-                                    child: Text(
-                                      'Unable to check the current sprayer command. '
-                                          'For safety, sprayer controls are temporarily unavailable.',
-                                      textAlign: TextAlign.center,
-                                    ),
+                      if (statusSnapshot.connectionState ==
+                          ConnectionState.waiting) {
+                        return const Scaffold(
+                          body: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+
+                      final statusData = readRtdbMap(
+                        statusSnapshot.data?.snapshot.value,
+                      );
+                      latestStatusData = statusData;
+
+                      final cooldownActive =
+                          statusData['cooldownActive'] == true;
+
+                      final cooldownRemainingSec =
+                          readRtdbInt(statusData, 'cooldownRemainingSec') ?? 0;
+
+                      final esp32Status =
+                          readRtdbUpperString(statusData, 'esp32Status') ??
+                          'UNKNOWN';
+
+                      final currentSprayCycle =
+                          readRtdbInt(statusData, 'currentSprayCycle') ?? 0;
+
+                      final totalSprayCycles =
+                          readRtdbInt(statusData, 'totalSprayCycles') ?? 0;
+
+                      final sprayCycleRemainingSec =
+                          readRtdbInt(statusData, 'sprayCycleRemainingSec') ??
+                          0;
+
+                      final sprayTrigger =
+                          (statusData['sprayTrigger'] ?? 'NONE')
+                              .toString()
+                              .toUpperCase();
+
+                      return StreamBuilder(
+                        stream: realtimeDatabaseService.settingsStream(
+                          deviceId,
+                        ),
+                        builder: (context, settingsSnapshot) {
+                          if (settingsSnapshot.hasError) {
+                            return const Scaffold(
+                              body: Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text(
+                                    'Unable to load sprayer settings. '
+                                    'Check your internet connection and try again.',
+                                    textAlign: TextAlign.center,
                                   ),
-                                ),
-                              );
-                            }
-
-                            Map<String, dynamic>? activeCommand;
-
-                            if (commandSnapshot.hasData &&
-                                commandSnapshot.data!.snapshot.value != null) {
-                              activeCommand = Map<String, dynamic>.from(
-                                commandSnapshot.data!.snapshot.value as Map,
-                              );
-                            }
-                            final isEmergencyStop =
-                                esp32Status == 'EMERGENCY_STOP';
-
-                            final pumpStatus =
-                            (statusData['pumpStatus'] ?? 'OFF')
-                                .toString()
-                                .toUpperCase();
-
-                            final isSpraying =
-                                pumpStatus == 'ON' || pumpStatus == 'RUNNING';
-
-                            final commandStatus =
-                                activeCommand?['status'] ?? 'IDLE';
-
-                            final commandType =
-                                activeCommand?['command'] ?? 'NONE';
-
-                            final commandTrigger =
-                            (activeCommand?['trigger'] ?? '')
-                                .toString()
-                                .toUpperCase();
-
-                            final isStartSprayCommand =
-                                commandType == 'START_SPRAY';
-
-                            final isManualCommand =
-                                isStartSprayCommand &&
-                                    commandTrigger == 'MANUAL';
-
-                            final isAutoCommand =
-                                isStartSprayCommand && commandTrigger == 'AUTO';
-
-                            final isTestCommand = commandType == 'TEST_SPRAYER';
-
-                            final triggerType = isSpraying
-                                ? sprayTrigger == 'AUTO'
-                                ? 'Automatic Spray'
-                                : sprayTrigger == 'TEST'
-                                ? 'Test Sprayer'
-                                : sprayTrigger == 'MANUAL'
-                                ? 'Manual Spray'
-                                : 'Spraying'
-                                : isTestCommand
-                                ? 'Test Sprayer'
-                                : isAutoCommand
-                                ? 'Automatic Spray'
-                                : isManualCommand
-                                ? 'Manual Spray'
-                                : 'None';
-                            final latestSprayerMessage = isSpraying
-                                ? 'Sprayer is currently running.'
-                                : cooldownActive
-                                ? 'Cooldown active. Sprayer is temporarily locked.'
-                                : commandStatus == 'CANCELLED'
-                                ? 'Last command was cancelled.'
-                                : commandStatus == 'COMPLETED'
-                                ? 'Last command completed successfully.'
-                                : 'Sprayer is idle and ready.';
-
-                            final displayCycle = isSpraying
-                                ? currentSprayCycle
-                                : 0;
-
-                            final displayTotalCycles = isSpraying
-                                ? totalSprayCycles
-                                : 0;
-
-                            final displayRemainingSec = isSpraying
-                                ? sprayCycleRemainingSec
-                                : 0;
-                            return Scaffold(
-                              appBar: AppBar(
-                                title: const Text('Sprayer Control'),
-                              ),
-                              body: SingleChildScrollView(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  children: [
-                                    if (!deviceOnline) ...[
-                                      DeviceOfflineSprayerWarningCard(
-                                        lastHeartbeat: lastHeartbeat,
-                                      ),
-
-                                      const SizedBox(height: 16),
-                                    ],
-
-                                    AutoModeControlCard(
-                                      autoMode: autoMode,
-                                      deviceOnline: deviceOnline,
-                                      isEmergencyStop: isEmergencyStop,
-                                      onChanged: (enabled) async {
-                                        await realtimeDatabaseService
-                                            .updateAutoMode(
-                                          deviceId: deviceId,
-                                          enabled: enabled,
-                                        );
-                                      },
-                                    ),
-
-                                    const SizedBox(height: 16),
-
-                                    DeviceSafetyCard(
-                                      isEmergencyStop: isEmergencyStop,
-                                      esp32Status: esp32Status,
-                                      deviceOnline: deviceOnline,
-                                      lastHeartbeat: lastHeartbeat,
-                                    ),
-
-                                    if (cooldownActive) ...[
-                                      const SizedBox(height: 16),
-
-                                      CooldownCard(
-                                        remainingSec: cooldownRemainingSec,
-                                      ),
-                                    ],
-
-                                    const SizedBox(height: 16),
-
-                                    SprayerStatusCard(
-                                      statusText: isEmergencyStop
-                                          ? 'Emergency stopped'
-                                          : isSpraying
-                                          ? 'Sprayer running'
-                                          : cooldownActive
-                                          ? 'Cooldown active'
-                                          : commandStatus == 'COMPLETED'
-                                          ? 'Spraying completed'
-                                          : 'Sprayer idle',
-
-                                      statusColor: isEmergencyStop
-                                          ? AppColors.danger
-                                          : isSpraying
-                                          ? AppColors.primaryGreen
-                                          : cooldownActive
-                                          ? AppColors.warning
-                                          : commandStatus == 'COMPLETED'
-                                          ? AppColors.lowRisk
-                                          : AppColors.textLight,
-                                      isSpraying: isSpraying || isManualCommand,
-                                      currentCycle: displayCycle,
-                                      totalCycles: displayTotalCycles,
-                                      remainingSec: displayRemainingSec,
-                                      triggerType: triggerType,
-                                      latestMessage: latestSprayerMessage,
-                                    ),
-
-                                    const SizedBox(height: 16),
-
-                                    SpraySettingsCard(
-                                      cycles: cycles,
-                                      durationSec: durationSec,
-                                      isLocked: isSpraying,
-                                      onCyclesChanged: (value) {
-                                        setState(() {
-                                          cycles = value;
-                                        });
-                                      },
-                                      onDurationChanged: (value) {
-                                        setState(() {
-                                          durationSec = value;
-                                        });
-                                      },
-                                    ),
-
-                                    const SizedBox(height: 16),
-
-                                    ActionButtons(
-                                      isSpraying: isSpraying,
-                                      cooldownActive: cooldownActive,
-                                      isEmergencyStop: isEmergencyStop,
-
-                                      onManualSpray:
-                                      isEmergencyStop ||
-                                          !deviceOnline ||
-                                          cooldownActive ||
-                                          isSpraying
-                                          ? null
-                                          : () => showSafetyChecklistDialog(
-                                        context,
-                                        deviceId,
-                                      ),
-
-                                      onTestSprayer:
-                                      isEmergencyStop ||
-                                          !deviceOnline ||
-                                          cooldownActive ||
-                                          isSpraying
-                                          ? null
-                                          : () => testSprayer(deviceId),
-
-                                      onStop: () =>
-                                          confirmEmergencyStop(deviceId),
-
-                                      onResetSystem:
-                                      isEmergencyStop && deviceOnline
-                                          ? () => resetSystem(deviceId)
-                                          : null,
-                                    ),
-
-                                    if (commandType != 'NONE') ...[
-                                      const SizedBox(height: 16),
-
-                                      ActiveCommandCard(
-                                        commandType: commandType,
-                                        commandStatus: commandStatus,
-                                      ),
-
-                                      const SizedBox(height: 16),
-
-                                      SprayerActivityTimeline(
-                                        deviceId: deviceId,
-                                      ),
-                                    ],
-
-                                    const SizedBox(height: 16),
-
-                                    ExpansionTile(
-                                      tilePadding: const EdgeInsets.symmetric(
-                                        horizontal: 4,
-                                      ),
-                                      title: const Text(
-                                        'Advanced Details',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: AppColors.textDark,
-                                        ),
-                                      ),
-                                      subtitle: const Text(
-                                        'View technical command history and system state.',
-                                        style: TextStyle(
-                                          color: AppColors.textLight,
-                                        ),
-                                      ),
-                                      children: [
-                                        CommandHistoryTimeline(
-                                          deviceId: deviceId,
-                                        ),
-                                      ],
-                                    ),
-                                  ],
                                 ),
                               ),
                             );
-                          },
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-            );
-          },
+                          }
+
+                          if (!settingsSnapshot.hasData) {
+                            return const Scaffold(
+                              body: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+
+                          final settingsData =
+                              settingsSnapshot.data?.snapshot.value;
+
+                          final settings = settingsData is Map
+                              ? Map<String, dynamic>.from(settingsData)
+                              : <String, dynamic>{};
+
+                          final autoMode = settings['autoMode'] == true;
+
+                          return StreamBuilder(
+                            stream: realtimeDatabaseService.activeCommandStream(
+                              deviceId,
+                            ),
+
+                            builder: (context, commandSnapshot) {
+                              if (commandSnapshot.hasError) {
+                                return const Scaffold(
+                                  body: Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(24),
+                                      child: Text(
+                                        'Unable to check the current sprayer command. '
+                                        'For safety, sprayer controls are temporarily unavailable.',
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              final rawCommand =
+                                  commandSnapshot.data?.snapshot.value;
+                              commandStateKnown =
+                                  commandSnapshot.hasData &&
+                                  (rawCommand == null || rawCommand is Map);
+                              final activeCommand = readRtdbMap(rawCommand);
+                              latestActiveCommand = activeCommand;
+                              final startBlocked =
+                                  commandInFlight ||
+                                  stopInFlight ||
+                                  sprayerCommandBlockReason(
+                                        command: 'START_SPRAY',
+                                        connected: appConnected,
+                                        heartbeatAlive: deviceOnline,
+                                        status: statusData,
+                                        activeCommand: activeCommand,
+                                        commandStateKnown: commandStateKnown,
+                                      ) !=
+                                      null;
+                              final isEmergencyStop =
+                                  esp32Status == 'EMERGENCY_STOP';
+
+                              final pumpStatus =
+                                  (statusData['pumpStatus'] ?? 'OFF')
+                                      .toString()
+                                      .toUpperCase();
+
+                              final isSpraying =
+                                  pumpStatus == 'ON' || pumpStatus == 'RUNNING';
+
+                              final commandStatus =
+                                  readRtdbUpperString(
+                                    activeCommand,
+                                    'status',
+                                  ) ??
+                                  'IDLE';
+
+                              final commandType =
+                                  readRtdbUpperString(
+                                    activeCommand,
+                                    'command',
+                                  ) ??
+                                  'NONE';
+
+                              final commandTrigger =
+                                  (activeCommand['trigger'] ?? '')
+                                      .toString()
+                                      .toUpperCase();
+
+                              final isStartSprayCommand =
+                                  commandType == 'START_SPRAY';
+
+                              final isManualCommand =
+                                  isStartSprayCommand &&
+                                  commandTrigger == 'MANUAL';
+
+                              final isAutoCommand =
+                                  isStartSprayCommand &&
+                                  commandTrigger == 'AUTO';
+
+                              final isTestCommand =
+                                  commandType == 'TEST_SPRAYER';
+
+                              final triggerType = isSpraying
+                                  ? sprayTrigger == 'AUTO'
+                                        ? 'Automatic Spray'
+                                        : sprayTrigger == 'TEST'
+                                        ? 'Test Sprayer'
+                                        : sprayTrigger == 'MANUAL'
+                                        ? 'Manual Spray'
+                                        : 'Spraying'
+                                  : isTestCommand
+                                  ? 'Test Sprayer'
+                                  : isAutoCommand
+                                  ? 'Automatic Spray'
+                                  : isManualCommand
+                                  ? 'Manual Spray'
+                                  : 'None';
+                              final latestSprayerMessage =
+                                  hasBusyCommand(activeCommand) && !isSpraying
+                                  ? 'Waiting for the device to finish the current command.'
+                                  : startBlocked && !isSpraying
+                                  ? 'Sprayer controls are unavailable until the device is ready.'
+                                  : isSpraying
+                                  ? 'Sprayer is currently running.'
+                                  : cooldownActive
+                                  ? 'Cooldown active. Sprayer is temporarily locked.'
+                                  : commandStatus == 'CANCELLED'
+                                  ? 'Last command was cancelled.'
+                                  : commandStatus == 'COMPLETED'
+                                  ? 'Last command completed successfully.'
+                                  : 'Sprayer is idle and ready.';
+
+                              final displayCycle = isSpraying
+                                  ? currentSprayCycle
+                                  : 0;
+
+                              final displayTotalCycles = isSpraying
+                                  ? totalSprayCycles
+                                  : 0;
+
+                              final displayRemainingSec = isSpraying
+                                  ? sprayCycleRemainingSec
+                                  : 0;
+                              return Scaffold(
+                                appBar: AppBar(
+                                  title: const Text('Sprayer Control'),
+                                ),
+                                body: SingleChildScrollView(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    16,
+                                    16,
+                                    100,
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      if (!deviceOnline) ...[
+                                        DeviceOfflineSprayerWarningCard(
+                                          lastHeartbeat: lastHeartbeat,
+                                        ),
+
+                                        const SizedBox(height: 16),
+                                      ],
+
+                                      AutoModeControlCard(
+                                        autoMode: autoMode,
+                                        deviceOnline:
+                                            deviceOnline && appConnected,
+                                        isUpdating: settingsInFlight,
+                                        canEnable: !startBlocked,
+                                        isEmergencyStop: isEmergencyStop,
+                                        onChanged: (enabled) async {
+                                          if (settingsInFlight) return;
+                                          setState(
+                                            () => settingsInFlight = true,
+                                          );
+                                          try {
+                                            await realtimeDatabaseService
+                                                .updateAutoMode(
+                                                  deviceId: deviceId,
+                                                  enabled: enabled,
+                                                );
+                                          } catch (_) {
+                                            if (mounted)
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text(
+                                                        'Unable to change Auto Mode. Check the device status and connection.',
+                                                      ),
+                                                    ),
+                                                  );
+                                          } finally {
+                                            if (mounted)
+                                              setState(
+                                                () => settingsInFlight = false,
+                                              );
+                                          }
+                                        },
+                                      ),
+
+                                      const SizedBox(height: 16),
+
+                                      DeviceSafetyCard(
+                                        isEmergencyStop: isEmergencyStop,
+                                        esp32Status: esp32Status,
+                                        deviceOnline: deviceOnline,
+                                        lastHeartbeat: lastHeartbeat,
+                                      ),
+
+                                      if (cooldownActive) ...[
+                                        const SizedBox(height: 16),
+
+                                        CooldownCard(
+                                          remainingSec: cooldownRemainingSec,
+                                        ),
+                                      ],
+
+                                      const SizedBox(height: 16),
+
+                                      SprayerStatusCard(
+                                        statusText: isEmergencyStop
+                                            ? 'Emergency stopped'
+                                            : isSpraying
+                                            ? 'Sprayer running'
+                                            : cooldownActive
+                                            ? 'Cooldown active'
+                                            : commandStatus == 'COMPLETED'
+                                            ? 'Spraying completed'
+                                            : 'Sprayer idle',
+
+                                        statusColor: isEmergencyStop
+                                            ? AppColors.danger
+                                            : isSpraying
+                                            ? AppColors.primaryGreen
+                                            : cooldownActive
+                                            ? AppColors.warning
+                                            : commandStatus == 'COMPLETED'
+                                            ? AppColors.lowRisk
+                                            : AppColors.textLight,
+                                        isSpraying:
+                                            isSpraying || isManualCommand,
+                                        currentCycle: displayCycle,
+                                        totalCycles: displayTotalCycles,
+                                        remainingSec: displayRemainingSec,
+                                        triggerType: triggerType,
+                                        latestMessage: latestSprayerMessage,
+                                      ),
+
+                                      const SizedBox(height: 16),
+
+                                      SpraySettingsCard(
+                                        cycles: cycles,
+                                        durationSec: durationSec,
+                                        isLocked: startBlocked,
+                                        onCyclesChanged: (value) {
+                                          setState(() {
+                                            cycles = value;
+                                          });
+                                        },
+                                        onDurationChanged: (value) {
+                                          setState(() {
+                                            durationSec = value;
+                                          });
+                                        },
+                                      ),
+
+                                      const SizedBox(height: 16),
+
+                                      ActionButtons(
+                                        isSpraying: isSpraying,
+                                        cooldownActive: cooldownActive,
+                                        isEmergencyStop: isEmergencyStop,
+
+                                        onManualSpray: startBlocked
+                                            ? null
+                                            : () => showSafetyChecklistDialog(
+                                                context,
+                                                deviceId,
+                                              ),
+
+                                        onTestSprayer: startBlocked
+                                            ? null
+                                            : () => testSprayer(deviceId),
+
+                                        onResetSystem:
+                                            isEmergencyStop &&
+                                                deviceOnline &&
+                                                appConnected &&
+                                                !commandInFlight &&
+                                                !hasBusyCommand(activeCommand)
+                                            ? () => resetSystem(deviceId)
+                                            : null,
+                                      ),
+
+                                      if (commandType != 'NONE') ...[
+                                        const SizedBox(height: 16),
+
+                                        ActiveCommandCard(
+                                          commandType: commandType,
+                                          commandStatus: commandStatus,
+                                        ),
+
+                                        const SizedBox(height: 16),
+
+                                        SprayerActivityTimeline(
+                                          deviceId: deviceId,
+                                        ),
+                                      ],
+
+                                      const SizedBox(height: 16),
+
+                                      ExpansionTile(
+                                        tilePadding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                        ),
+                                        title: const Text(
+                                          'Advanced Details',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.textDark,
+                                          ),
+                                        ),
+                                        subtitle: const Text(
+                                          'View technical command history and system state.',
+                                          style: TextStyle(
+                                            color: AppColors.textLight,
+                                          ),
+                                        ),
+                                        children: [
+                                          CommandHistoryTimeline(
+                                            deviceId: deviceId,
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
         );
       },
     );

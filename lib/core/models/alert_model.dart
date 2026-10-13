@@ -1,3 +1,5 @@
+import '../utils/rtdb_value_parser.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AlertModel {
@@ -42,37 +44,29 @@ class AlertModel {
   });
 
   factory AlertModel.fromMap(
-      Map<String, dynamic> map, {
-        required String alertId,
-        required String deviceId,
-      }) {
+    Map<String, dynamic> map, {
+    required String alertId,
+    required String deviceId,
+  }) {
     return AlertModel(
       alertId: alertId,
       deviceId: deviceId,
-      type: map['type'] ?? 'SYSTEM',
-      title: map['title'] ?? '',
-      message: map['message'] ?? '',
-      severity: map['severity'] ?? 'INFO',
-      isRead: map['isRead'] ?? false,
+      type: readRtdbString(map, 'type', fallback: 'SYSTEM'),
+      title: readRtdbString(map, 'title', fallback: ''),
+      message: readRtdbString(map, 'message', fallback: ''),
+      severity: readRtdbString(map, 'severity', fallback: 'INFO'),
+      isRead: readRtdbBool(map, 'isRead') ?? false,
       createdAt: map['createdAt'] is Timestamp
           ? (map['createdAt'] as Timestamp).toDate()
-          : map['createdAt'] is DateTime
-          ? map['createdAt'] as DateTime
-          : map['createdAt'] is num
-          ? DateTime.fromMillisecondsSinceEpoch(
-        (map['createdAt'] as num).toInt(),
-      )
-          : DateTime.fromMillisecondsSinceEpoch(0),
+          : readRtdbDateTime(map['createdAt']),
       responseTimeTest: map['responseTimeTest'] == true,
-      testTrialNumber: (map['testTrialNumber'] as num?)?.toInt(),
+      testTrialNumber: readRtdbInt(map, 'testTrialNumber'),
       testTrialId: map['testTrialId']?.toString(),
-      riskGeneratedEpochMs:
-      (map['riskGeneratedEpochMs'] as num?)?.toInt(),
-      riskScore: (map['riskScore'] as num?)?.toInt(),
+      riskGeneratedEpochMs: readRtdbInt(map, 'riskGeneratedEpochMs'),
+      riskScore: readRtdbInt(map, 'riskScore'),
       riskLevel: map['riskLevel']?.toString(),
-      alertDisplayedEpochMs:
-      (map['alertDisplayedEpochMs'] as num?)?.toInt(),
-      riskToAlertMs: (map['riskToAlertMs'] as num?)?.toInt(),
+      alertDisplayedEpochMs: readRtdbInt(map, 'alertDisplayedEpochMs'),
+      riskToAlertMs: readRtdbInt(map, 'riskToAlertMs'),
     );
   }
 

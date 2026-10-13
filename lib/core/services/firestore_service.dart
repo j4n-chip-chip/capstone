@@ -6,8 +6,13 @@ class FirestoreService {
   CollectionReference<Map<String, dynamic>> get users =>
       _db.collection('users');
 
+  final Map<String, Stream<DocumentSnapshot<Map<String, dynamic>>>> _streams =
+      {};
+
+  void clearStreamCache() => _streams.clear();
+
   Stream<DocumentSnapshot<Map<String, dynamic>>> userStream(String userId) {
-    return users.doc(userId).snapshots();
+    return _streams.putIfAbsent(userId, () => users.doc(userId).snapshots());
   }
 }
 

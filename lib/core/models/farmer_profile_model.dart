@@ -1,3 +1,5 @@
+import '../utils/rtdb_value_parser.dart';
+
 class FarmerProfileModel {
   final String name;
   final String email;
@@ -11,9 +13,9 @@ class FarmerProfileModel {
 
   factory FarmerProfileModel.fromMap(Map<String, dynamic> map) {
     return FarmerProfileModel(
-      name: map['name'] ?? '',
-      email: map['email'] ?? '',
-      role: map['role'] ?? 'Farmer',
+      name: readRtdbString(map, 'name'),
+      email: readRtdbString(map, 'email'),
+      role: readRtdbString(map, 'role', fallback: 'Farmer'),
     );
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'core/constants/app_colors.dart';
 import 'features/auth/login_screen.dart';
 import 'features/app_shell/app_shell.dart';
@@ -87,6 +88,7 @@ class BananaDoctorApp extends StatelessWidget {
 
           if (snapshot.hasData) {
             return AppShell(
+              key: ValueKey(snapshot.data!.uid),
               onLogout: () async {
                 await firebaseAuthService.logout();
               },

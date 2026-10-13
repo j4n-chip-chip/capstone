@@ -1,3 +1,5 @@
+import '../../../core/utils/device_heartbeat.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/app_colors.dart';
@@ -17,25 +19,8 @@ class DeviceHealthCard extends StatelessWidget {
   final IotDataModel data;
   final Map<String, dynamic> deviceInfo;
 
-  String formatHeartbeat(dynamic heartbeat) {
-    if (!isOnline) {
-      return 'No active heartbeat';
-    }
-
-    if (heartbeat is! num) {
-      return 'Unavailable';
-    }
-
-    final dateTime = DateTime.fromMillisecondsSinceEpoch(
-      heartbeat.toInt(),
-    );
-
-    final hour = dateTime.hour % 12 == 0 ? 12 : dateTime.hour % 12;
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
-
-    return '$hour:$minute $period';
-  }
+  String formatHeartbeat(dynamic heartbeat) =>
+      isOnline ? formatHeartbeatValue(heartbeat) : 'No active heartbeat';
 
   String formatStatus(String value) {
     if (value.isEmpty) return value;
@@ -45,8 +30,8 @@ class DeviceHealthCard extends StatelessWidget {
         .split('_')
         .map(
           (word) =>
-      word.isEmpty ? word : word[0].toUpperCase() + word.substring(1),
-    )
+              word.isEmpty ? word : word[0].toUpperCase() + word.substring(1),
+        )
         .join(' ');
   }
 
@@ -70,23 +55,23 @@ class DeviceHealthCard extends StatelessWidget {
 
     final sensorReadingsAvailable =
         isOnline &&
-            (sensorStatus == 'OK' ||
-                sensorStatus == 'ONLINE' ||
-                sensorStatus == 'CONNECTED');
+        (sensorStatus == 'OK' ||
+            sensorStatus == 'ONLINE' ||
+            sensorStatus == 'CONNECTED');
 
     final relayOk =
         isOnline &&
-            (relayStatus == 'READY' ||
-                relayStatus == 'ON' ||
-                relayStatus == 'ACTIVE' ||
-                relayStatus == 'OFF');
+        (relayStatus == 'READY' ||
+            relayStatus == 'ON' ||
+            relayStatus == 'ACTIVE' ||
+            relayStatus == 'OFF');
 
     final pumpOk =
         isOnline &&
-            (pumpStatus == 'IDLE' ||
-                pumpStatus == 'RUNNING' ||
-                pumpStatus == 'ON' ||
-                pumpStatus == 'OFF');
+        (pumpStatus == 'IDLE' ||
+            pumpStatus == 'RUNNING' ||
+            pumpStatus == 'ON' ||
+            pumpStatus == 'OFF');
 
     return Card(
       child: Padding(
@@ -149,8 +134,8 @@ class DeviceHealthCard extends StatelessWidget {
                   : pumpOk
                   ? DeviceStatusState.ok
                   : pumpStatus == 'UNAVAILABLE' ||
-                  pumpStatus == 'UNKNOWN' ||
-                  pumpStatus == 'DISABLED'
+                        pumpStatus == 'UNKNOWN' ||
+                        pumpStatus == 'DISABLED'
                   ? DeviceStatusState.warning
                   : DeviceStatusState.error,
             ),

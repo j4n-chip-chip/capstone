@@ -35,10 +35,7 @@ class EnvironmentalTrendsChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DatabaseEvent>(
-      stream: realtimeDatabaseService
-          .sensorHistoryRef(deviceId)
-          .limitToLast(20)
-          .onValue,
+      stream: realtimeDatabaseService.sensorHistoryStream(deviceId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Card(
@@ -65,9 +62,7 @@ class EnvironmentalTrendsChart extends StatelessWidget {
           );
         }
 
-        final raw = Map<String, dynamic>.from(
-          snapshot.data!.snapshot.value as Map,
-        );
+        final raw = readRtdbMap(snapshot.data?.snapshot.value);
 
         final entries =
             raw.entries.where((entry) => entry.value is Map).toList()

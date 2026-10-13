@@ -85,7 +85,7 @@ class _DiseaseDevelopmentTimelineState
                   const SizedBox(height: 8),
                   const Text(
                     'Unable to load disease development history. '
-                        'Check your internet connection and try again.',
+                    'Check your internet connection and try again.',
                     style: TextStyle(color: AppColors.textLight, height: 1.4),
                   ),
                 ],
@@ -98,21 +98,19 @@ class _DiseaseDevelopmentTimelineState
           return const SizedBox.shrink();
         }
 
-        final raw = Map<String, dynamic>.from(
-          snapshot.data!.snapshot.value as Map,
-        );
+        final raw = readRtdbMap(snapshot.data?.snapshot.value);
 
         final entries =
-        raw.entries.where((entry) => entry.value is Map).toList()
-          ..sort((a, b) {
-            final aValue = Map<String, dynamic>.from(a.value as Map);
-            final bValue = Map<String, dynamic>.from(b.value as Map);
+            raw.entries.where((entry) => entry.value is Map).toList()
+              ..sort((a, b) {
+                final aValue = Map<String, dynamic>.from(a.value as Map);
+                final bValue = Map<String, dynamic>.from(b.value as Map);
 
-            final aTime = readRtdbInt(aValue, 'timestamp') ?? 0;
-            final bTime = readRtdbInt(bValue, 'timestamp') ?? 0;
+                final aTime = readRtdbInt(aValue, 'timestamp') ?? 0;
+                final bTime = readRtdbInt(bValue, 'timestamp') ?? 0;
 
-            return aTime.compareTo(bTime);
-          });
+                return aTime.compareTo(bTime);
+              });
 
         final items = <RiskTimelineItem>[];
 

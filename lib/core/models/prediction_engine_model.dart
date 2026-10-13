@@ -1,3 +1,5 @@
+import '../utils/rtdb_value_parser.dart';
+
 class PredictionEngineModel {
   final String riskLevel;
   final List<String> reasons;
@@ -36,42 +38,56 @@ class PredictionEngineModel {
     required this.persistenceScore,
   });
 
+  bool get hasValidRisk =>
+      const {'LOW', 'MODERATE', 'HIGH', 'VERY HIGH'}.contains(riskLevel) &&
+      riskScore >= 0 &&
+      riskScore <= 18;
+
   factory PredictionEngineModel.fromMap(Map<String, dynamic> map) {
+    final level = readRtdbUpperString(map, 'riskLevel');
+    final score = readRtdbInt(map, 'riskScore');
+    final validRisk =
+        const {'LOW', 'MODERATE', 'HIGH', 'VERY HIGH'}.contains(level) &&
+        score != null &&
+        score >= 0 &&
+        score <= 18;
+    int? component(String key, int maximum) {
+      final value = readRtdbInt(map, key);
+      return value != null && value >= 0 && value <= maximum ? value : null;
+    }
+
+    final temperature = component('temperatureScore', 4);
+    final humidity = component('humidityScore', 4);
+    final wetness = component('wetnessStatusScore', 2);
+    final duration = component('wetnessDurationScore', 5);
+    final persistence = component('persistenceScore', 3);
+    final reasons = map['reasons'];
+
     return PredictionEngineModel(
-      riskLevel: map['riskLevel'] ?? 'LOW',
-
-      reasons: List<String>.from(map['reasons'] ?? []),
-
-      recommendation: map['recommendation'] ?? map['recommendedAction'] ?? '',
-
-      smartInsight: map['smartInsight'] ?? '',
-
-      lastEvaluated: map['lastEvaluated'] is DateTime
-          ? map['lastEvaluated'] as DateTime
-          : DateTime.fromMillisecondsSinceEpoch(0),
-
-      riskScore: (map['riskScore'] as num?)?.round() ?? 0,
-
-      riskExplanation: map['riskExplanation'] ?? '',
-
-      recommendedAction: map['recommendedAction'] ?? '',
-
-      temperatureScore: (map['temperatureScore'] as num?)?.round() ?? 0,
-
-      humidityScore: (map['humidityScore'] as num?)?.round() ?? 0,
-
-      wetnessStatusScore: (map['wetnessStatusScore'] as num?)?.round() ?? 0,
-
-      wetnessDurationScore: (map['wetnessDurationScore'] as num?)?.round() ?? 0,
-
-      persistenceScore: (map['persistenceScore'] as num?)?.round() ?? 0,
-
+      riskLevel: validRisk ? level! : 'UNKNOWN',
+      riskScore: validRisk ? score : 0,
+      reasons: reasons is List ? reasons.whereType<String>().toList() : [],
+      recommendation: readRtdbString(
+        map,
+        'recommendation',
+        fallback: readRtdbString(map, 'recommendedAction'),
+      ),
+      smartInsight: readRtdbString(map, 'smartInsight'),
+      lastEvaluated: readRtdbDateTime(map['lastEvaluated']),
+      riskExplanation: readRtdbString(map, 'riskExplanation'),
+      recommendedAction: readRtdbString(map, 'recommendedAction'),
+      temperatureScore: temperature ?? 0,
+      humidityScore: humidity ?? 0,
+      wetnessStatusScore: wetness ?? 0,
+      wetnessDurationScore: duration ?? 0,
+      persistenceScore: persistence ?? 0,
       hasScoreBreakdown:
-          map.containsKey('temperatureScore') &&
-          map.containsKey('humidityScore') &&
-          map.containsKey('wetnessStatusScore') &&
-          map.containsKey('wetnessDurationScore') &&
-          map.containsKey('persistenceScore'),
+          validRisk &&
+          temperature != null &&
+          humidity != null &&
+          wetness != null &&
+          duration != null &&
+          persistence != null,
     );
   }
 

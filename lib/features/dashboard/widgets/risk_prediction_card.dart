@@ -91,7 +91,10 @@ class RiskPredictionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final breakdown = buildRiskBreakdown();
-    final displayedRiskLevel = isOnline ? riskLevel : 'UNAVAILABLE';
+    final riskAvailable =
+        isOnline &&
+        const {'LOW', 'MODERATE', 'HIGH', 'VERY HIGH'}.contains(riskLevel);
+    final displayedRiskLevel = riskAvailable ? riskLevel : 'UNAVAILABLE';
 
     return Card(
       child: Container(
@@ -128,8 +131,8 @@ class RiskPredictionCard extends StatelessWidget {
                   Row(
                     children: [
                       Icon(
-                        !isOnline
-                            ? Icons.wifi_off
+                        !riskAvailable
+                            ? Icons.help_outline
                             : riskLevel == 'LOW'
                             ? Icons.check_circle
                             : riskLevel == 'MODERATE'
@@ -160,9 +163,7 @@ class RiskPredictionCard extends StatelessWidget {
                   const SizedBox(height: 10),
 
                   Text(
-                    isOnline
-                        ? riskMessage
-                        : 'Current Black Sigatoka risk cannot be confirmed until new sensor data is received.',
+                    isOnline ? riskMessage : 'Current Black Sigatoka risk cannot be confirmed until new sensor data is received.',
                     style: const TextStyle(
                       color: AppColors.textDark,
                       height: 1.5,
@@ -173,7 +174,7 @@ class RiskPredictionCard extends StatelessWidget {
                   const SizedBox(height: 12),
 
                   Text(
-                    isOnline
+                    riskAvailable
                         ? 'Risk Score: $riskScore / 18'
                         : 'Risk Score: Unavailable',
                     style: TextStyle(
@@ -214,7 +215,7 @@ class RiskPredictionCard extends StatelessWidget {
                     ),
                   ],
 
-                  if (isOnline) ...[
+                  if (riskAvailable) ...[
                     const SizedBox(height: 10),
 
                     LinearProgressIndicator(
@@ -245,71 +246,71 @@ class RiskPredictionCard extends StatelessWidget {
                       ),
                       child: hasScoreBreakdown
                           ? Column(
-                        children: breakdown.map((item) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Column(
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        item.label,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                              children: breakdown.map((item) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              item.label,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                          Text(
+                                            '${item.score} / ${item.maxScore}',
+                                            style: TextStyle(
+                                              color: riskColor,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                    Text(
-                                      '${item.score} / ${item.maxScore}',
-                                      style: TextStyle(
+                                      const SizedBox(height: 6),
+                                      LinearProgressIndicator(
+                                        value: item.score / item.maxScore,
+                                        minHeight: 6,
+                                        borderRadius: BorderRadius.circular(20),
+                                        backgroundColor: AppColors.background,
                                         color: riskColor,
-                                        fontWeight: FontWeight.bold,
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            )
+                          : const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 20,
+                                  color: AppColors.textLight,
                                 ),
-                                const SizedBox(height: 6),
-                                LinearProgressIndicator(
-                                  value: item.score / item.maxScore,
-                                  minHeight: 6,
-                                  borderRadius: BorderRadius.circular(20),
-                                  backgroundColor: AppColors.background,
-                                  color: riskColor,
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Detailed risk indicators are not available yet. '
+                                    'They will update when the farm device sends a new prediction.',
+                                    style: TextStyle(
+                                      color: AppColors.textLight,
+                                      height: 1.4,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                          );
-                        }).toList(),
-                      )
-                          : const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            Icons.info_outline,
-                            size: 20,
-                            color: AppColors.textLight,
-                          ),
-                          SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Detailed risk indicators are not available yet. '
-                                  'They will update when the farm device sends a new prediction.',
-                              style: TextStyle(
-                                color: AppColors.textLight,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                   ],
                 ],
               ),
             ),
 
-            if (isOnline) ...[
+            if (riskAvailable) ...[
               const SizedBox(height: 14),
 
               Container(
@@ -321,7 +322,7 @@ class RiskPredictionCard extends StatelessWidget {
                 ),
                 child: const Text(
                   'Detailed risk factors, recommended actions, and prediction insights '
-                      'will update when the farm device sends a new prediction.',
+                  'will update when the farm device sends a new prediction.',
                   style: TextStyle(color: AppColors.textLight, height: 1.4),
                 ),
               ),
@@ -363,27 +364,27 @@ class RiskPredictionCard extends StatelessWidget {
                   children: reasons
                       .map(
                         (reason) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: riskColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: riskColor.withValues(alpha: 0.20),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: riskColor.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: riskColor.withValues(alpha: 0.20),
+                            ),
+                          ),
+                          child: Text(
+                            reason,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textDark,
+                              height: 1.3,
+                            ),
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        reason,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textDark,
-                          height: 1.3,
-                        ),
-                      ),
-                    ),
-                  )
+                      )
                       .toList(),
                 ),
 

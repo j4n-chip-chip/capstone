@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../core/services/realtime_database_service.dart';
@@ -14,7 +13,7 @@ import '../sprayer/sprayer_control_screen.dart';
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.onLogout});
 
-  final VoidCallback onLogout;
+  final Future<void> Function() onLogout;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -90,161 +89,111 @@ class _AlertNavIcon extends StatelessWidget {
 
 class _AppShellState extends State<AppShell> {
   int currentIndex = 0;
+  int _refreshGeneration = 0;
+  late Stream<String?> authorizedDeviceIdStream;
 
-  late Stream<DocumentSnapshot<Map<String, dynamic>>> userProfileStream;
-
-  late Future<String?> authorizedDeviceIdFuture;
-
-  late final List<Widget> screens = [
-    const DashboardScreen(),
-    const SprayerControlScreen(),
-    const HistoryScreen(),
-    const NotificationsScreen(),
-    ProfileScreen(onLogout: widget.onLogout),
+  List<Widget> get screens => [
+    DashboardScreen(key: ValueKey('dashboard/$_refreshGeneration')),
+    SprayerControlScreen(key: ValueKey('sprayer/$_refreshGeneration')),
+    HistoryScreen(key: ValueKey('history/$_refreshGeneration')),
+    NotificationsScreen(
+      key: ValueKey('alerts/$_refreshGeneration'),
+      isVisible: currentIndex == 3,
+    ),
+    ProfileScreen(
+      key: ValueKey('profile/$_refreshGeneration'),
+      onLogout: widget.onLogout,
+      onRefresh: refreshData,
+    ),
   ];
+
+  void _bindDevice() {
+    final user = FirebaseAuth.instance.currentUser;
+    authorizedDeviceIdStream = user == null
+        ? Stream.value(null)
+        : realtimeDatabaseService.authorizedDeviceIdStream(user.uid);
+  }
+
+  void refreshData() {
+    realtimeDatabaseService.clearStreamCache();
+    firestoreService.clearStreamCache();
+    setState(() {
+      _refreshGeneration++;
+      _bindDevice();
+    });
+  }
 
   @override
   void initState() {
     super.initState();
-
-    final user = FirebaseAuth.instance.currentUser;
-
-    authorizedDeviceIdFuture = user == null
-        ? Future.value(null)
-        : realtimeDatabaseService.getAuthorizedDeviceId(user.uid);
-
-    if (user != null) {
-      userProfileStream = firestoreService.userStream(user.uid);
-    }
+    _bindDevice();
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
+    if (FirebaseAuth.instance.currentUser == null) {
       return const Scaffold(body: Center(child: Text('No user logged in.')));
     }
-
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: userProfileStream,
-      builder: (context, userSnapshot) {
-        if (userSnapshot.hasError) {
-          return const Scaffold(
-            body: Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Unable to load your account information. '
-                  'Check your internet connection and try again.',
-                  textAlign: TextAlign.center,
+    // Account/device errors must not hide navigation or the logout action.
+    return StreamBuilder<String?>(
+      stream: authorizedDeviceIdStream,
+      builder: (context, deviceSnapshot) {
+        final deviceId = deviceSnapshot.hasError
+            ? ''
+            : deviceSnapshot.data ?? '';
+        return Scaffold(
+          body: IndexedStack(index: currentIndex, children: screens),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: currentIndex,
+            labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+            backgroundColor: Colors.white,
+            indicatorColor: AppColors.lightGreen,
+            onDestinationSelected: (index) {
+              setState(() {
+                currentIndex = index;
+              });
+            },
+            destinations: [
+              const NavigationDestination(
+                icon: Icon(Icons.dashboard_outlined),
+                selectedIcon: Icon(
+                  Icons.dashboard,
+                  color: AppColors.primaryGreen,
                 ),
+                label: 'Dashboard',
               ),
-            ),
-          );
-        }
 
-        if (userSnapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
-          return const Scaffold(
-            body: Center(
-              child: Text(
-                'Your farmer profile could not be found.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          );
-        }
-
-        return FutureBuilder<String?>(
-          future: authorizedDeviceIdFuture,
-          builder: (context, deviceSnapshot) {
-            if (deviceSnapshot.connectionState == ConnectionState.waiting) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-
-            if (deviceSnapshot.hasError) {
-              return const Scaffold(
-                body: Center(
-                  child: Text(
-                    'Unable to verify your assigned device.',
-                    textAlign: TextAlign.center,
-                  ),
+              const NavigationDestination(
+                icon: Icon(Icons.water_drop_outlined),
+                selectedIcon: Icon(
+                  Icons.water_drop,
+                  color: AppColors.primaryGreen,
                 ),
-              );
-            }
-
-            final deviceId = deviceSnapshot.data ?? '';
-
-            return Scaffold(
-              body: IndexedStack(index: currentIndex, children: screens),
-              bottomNavigationBar: NavigationBar(
-                selectedIndex: currentIndex,
-                labelBehavior:
-                    NavigationDestinationLabelBehavior.onlyShowSelected,
-                backgroundColor: Colors.white,
-                indicatorColor: AppColors.lightGreen,
-                onDestinationSelected: (index) {
-                  setState(() {
-                    currentIndex = index;
-                  });
-                },
-                destinations: [
-                  const NavigationDestination(
-                    icon: Icon(Icons.dashboard_outlined),
-                    selectedIcon: Icon(
-                      Icons.dashboard,
-                      color: AppColors.primaryGreen,
-                    ),
-                    label: 'Dashboard',
-                  ),
-
-                  const NavigationDestination(
-                    icon: Icon(Icons.water_drop_outlined),
-                    selectedIcon: Icon(
-                      Icons.water_drop,
-                      color: AppColors.primaryGreen,
-                    ),
-                    label: 'Sprayer',
-                  ),
-
-                  const NavigationDestination(
-                    icon: Icon(Icons.history_outlined),
-                    selectedIcon: Icon(
-                      Icons.history,
-                      color: AppColors.primaryGreen,
-                    ),
-                    label: 'Logs',
-                  ),
-
-                  NavigationDestination(
-                    icon: _AlertNavIcon(deviceId: deviceId, selected: false),
-                    selectedIcon: _AlertNavIcon(
-                      deviceId: deviceId,
-                      selected: true,
-                    ),
-                    label: 'Alerts',
-                  ),
-
-                  const NavigationDestination(
-                    icon: Icon(Icons.person_outline),
-                    selectedIcon: Icon(
-                      Icons.person,
-                      color: AppColors.primaryGreen,
-                    ),
-                    label: 'Profile',
-                  ),
-                ],
+                label: 'Sprayer',
               ),
-            );
-          },
+
+              const NavigationDestination(
+                icon: Icon(Icons.history_outlined),
+                selectedIcon: Icon(
+                  Icons.history,
+                  color: AppColors.primaryGreen,
+                ),
+                label: 'Logs',
+              ),
+
+              NavigationDestination(
+                icon: _AlertNavIcon(deviceId: deviceId, selected: false),
+                selectedIcon: _AlertNavIcon(deviceId: deviceId, selected: true),
+                label: 'Alerts',
+              ),
+
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person, color: AppColors.primaryGreen),
+                label: 'Profile',
+              ),
+            ],
+          ),
         );
       },
     );

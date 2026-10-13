@@ -14,19 +14,17 @@ import 'widgets/system_info_card.dart';
 import 'widgets/risk_guide_item.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({
-    super.key,
-    required this.onLogout,
-  });
+  const ProfileScreen({super.key, required this.onLogout, this.onRefresh});
 
-  final VoidCallback onLogout;
+  final Future<void> Function() onLogout;
+  final VoidCallback? onRefresh;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  late Future<String?> authorizedDeviceIdFuture;
+  late Stream<String?> authorizedDeviceIdStream;
 
   @override
   void initState() {
@@ -34,9 +32,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final user = FirebaseAuth.instance.currentUser;
 
-    authorizedDeviceIdFuture = user == null
-        ? Future.value(null)
-        : realtimeDatabaseService.getAuthorizedDeviceId(user.uid);
+    authorizedDeviceIdStream = user == null
+        ? Stream.value(null)
+        : realtimeDatabaseService.authorizedDeviceIdStream(user.uid);
   }
 
   void showComingSoon(BuildContext context, String feature) {
@@ -53,33 +51,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
 
+    final messenger = ScaffoldMessenger.of(context);
+    bool isUpdating = false;
     bool obscureCurrent = true;
     bool obscureNew = true;
     bool obscureConfirm = true;
 
-    showDialog(
+    await showDialog<void>(
+      barrierDismissible: false,
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            void submitChangePassword() async {
-              final currentPassword =
-              currentPasswordController.text.trim();
+            Future<void> submitChangePassword() async {
+              if (isUpdating) return;
+              final currentPassword = currentPasswordController.text;
 
-              final newPassword =
-              newPasswordController.text.trim();
+              final newPassword = newPasswordController.text;
 
-              final confirmPassword =
-              confirmPasswordController.text.trim();
+              final confirmPassword = confirmPasswordController.text;
 
               if (currentPassword.isEmpty ||
                   newPassword.isEmpty ||
                   confirmPassword.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text(
-                      'Please complete all password fields.',
-                    ),
+                    content: Text('Please complete all password fields.'),
                     backgroundColor: AppColors.danger,
                   ),
                 );
@@ -110,6 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 return;
               }
 
+              setDialogState(() => isUpdating = true);
               try {
                 final user = FirebaseAuth.instance.currentUser;
 
@@ -125,21 +123,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   password: currentPassword,
                 );
 
-                await user.reauthenticateWithCredential(
-                  credential,
-                );
+                await user.reauthenticateWithCredential(credential);
 
+                if (FirebaseAuth.instance.currentUser?.uid != user.uid) {
+                  throw StateError('Your account changed. Try again.');
+                }
                 await user.updatePassword(newPassword);
 
                 if (!context.mounted) return;
 
                 Navigator.pop(context);
 
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   const SnackBar(
-                    content: Text(
-                      'Password updated successfully.',
-                    ),
+                    content: Text('Password updated successfully.'),
                     backgroundColor: AppColors.primaryGreen,
                   ),
                 );
@@ -148,115 +145,125 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(
-                      e.message ?? 'Failed to update password.',
-                    ),
+                    content: Text(e.message ?? 'Failed to update password.'),
                     backgroundColor: AppColors.danger,
                   ),
                 );
+              } catch (_) {
+                if (context.mounted) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Unable to change your password. Please try again.',
+                      ),
+                      backgroundColor: AppColors.danger,
+                    ),
+                  );
+                }
+              } finally {
+                if (context.mounted) setDialogState(() => isUpdating = false);
               }
             }
 
-            return AlertDialog(
-              title: const Text('Change Password'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: currentPasswordController,
-                      obscureText: obscureCurrent,
-                      decoration: InputDecoration(
-                        prefixIcon:
-                        const Icon(Icons.lock_outline),
-                        hintText: 'Current password',
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            obscureCurrent
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
+            return PopScope(
+              canPop: !isUpdating,
+              child: AlertDialog(
+                title: const Text('Change Password'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: currentPasswordController,
+                        enabled: !isUpdating,
+                        obscureText: obscureCurrent,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          hintText: 'Current password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscureCurrent
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                obscureCurrent = !obscureCurrent;
+                              });
+                            },
                           ),
-                          onPressed: () {
-                            setDialogState(() {
-                              obscureCurrent =
-                              !obscureCurrent;
-                            });
-                          },
                         ),
                       ),
-                    ),
 
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
 
-                    TextField(
-                      controller: newPasswordController,
-                      obscureText: obscureNew,
-                      decoration: InputDecoration(
-                        prefixIcon:
-                        const Icon(Icons.lock_reset),
-                        hintText: 'New password',
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            obscureNew
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
+                      TextField(
+                        controller: newPasswordController,
+                        enabled: !isUpdating,
+                        obscureText: obscureNew,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.lock_reset),
+                          hintText: 'New password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscureNew
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                obscureNew = !obscureNew;
+                              });
+                            },
                           ),
-                          onPressed: () {
-                            setDialogState(() {
-                              obscureNew = !obscureNew;
-                            });
-                          },
                         ),
                       ),
-                    ),
 
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
 
-                    TextField(
-                      controller: confirmPasswordController,
-                      obscureText: obscureConfirm,
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(
-                          Icons.verified_user_outlined,
-                        ),
-                        hintText: 'Confirm new password',
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            obscureConfirm
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
+                      TextField(
+                        controller: confirmPasswordController,
+                        enabled: !isUpdating,
+                        obscureText: obscureConfirm,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.verified_user_outlined),
+                          hintText: 'Confirm new password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscureConfirm
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                obscureConfirm = !obscureConfirm;
+                              });
+                            },
                           ),
-                          onPressed: () {
-                            setDialogState(() {
-                              obscureConfirm =
-                              !obscureConfirm;
-                            });
-                          },
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+                actions: [
+                  TextButton(
+                    onPressed: isUpdating ? null : () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: isUpdating ? null : submitChangePassword,
+                    child: Text(isUpdating ? 'Updating...' : 'Update Password'),
+                  ),
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: submitChangePassword,
-                  child: const Text('Update Password'),
-                ),
-              ],
             );
           },
         );
       },
-    ).then((_) {
-      currentPasswordController.dispose();
-      newPasswordController.dispose();
-      confirmPasswordController.dispose();
-    });
+    );
+    currentPasswordController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
   }
 
   void showRiskGuideDialog(BuildContext context) {
@@ -272,10 +279,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 RiskGuideItem(
                   level: 'LOW (0–5)',
                   color: AppColors.lowRisk,
-                  description:
-                  'Current conditions are not favorable for Black Sigatoka development.',
-                  action:
-                  'No spraying needed. Continue monitoring.',
+                  description: 'Current conditions are not favorable for Black Sigatoka development.',
+                  action: 'No spraying needed. Continue monitoring.',
                 ),
 
                 SizedBox(height: 12),
@@ -283,10 +288,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 RiskGuideItem(
                   level: 'MODERATE (6–10)',
                   color: AppColors.moderateRisk,
-                  description:
-                  'Humidity is increasing or conditions may become favorable.',
-                  action:
-                  'Monitor closely. No automatic spraying yet.',
+                  description: 'Humidity is increasing or conditions may become favorable.',
+                  action: 'Monitor closely. No automatic spraying yet.',
                 ),
 
                 SizedBox(height: 12),
@@ -294,10 +297,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 RiskGuideItem(
                   level: 'HIGH (11–15)',
                   color: AppColors.highRisk,
-                  description:
-                  'Conditions are favorable for Black Sigatoka development.',
-                  action:
-                  'Preventive spraying may activate if Auto Mode is enabled.',
+                  description: 'Conditions are favorable for Black Sigatoka development.',
+                  action: 'Preventive spraying may activate if Auto Mode is enabled.',
                 ),
 
                 SizedBox(height: 12),
@@ -305,10 +306,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 RiskGuideItem(
                   level: 'VERY HIGH (16–18)',
                   color: AppColors.veryHighRisk,
-                  description:
-                  'Critical conditions detected: high humidity, suitable temperature, and long leaf wetness duration.',
+                  description: 'Critical conditions detected: high humidity, suitable temperature, and long leaf wetness duration.',
                   action:
-                  'Automatic preventive spraying is strongly recommended.',
+                      'Automatic preventive spraying is strongly recommended.',
                 ),
               ],
             ),
@@ -342,9 +342,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.danger,
               ),
-              onPressed: () {
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
                 Navigator.pop(context);
-                widget.onLogout();
+                try {
+                  await widget.onLogout();
+                } catch (_) {
+                  if (messenger.mounted)
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Unable to sign out. Please try again.'),
+                      ),
+                    );
+                }
               },
               child: const Text('Logout'),
             ),
@@ -359,56 +369,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      return const Scaffold(
-        body: Center(
-          child: Text('No user logged in.'),
-        ),
-      );
+      return const Scaffold(body: Center(child: Text('No user logged in.')));
     }
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile & Settings'),
+        actions: [
+          if (widget.onRefresh != null)
+            IconButton(
+              onPressed: widget.onRefresh,
+              tooltip: 'Refresh account and device',
+              icon: const Icon(Icons.refresh),
+            ),
+          IconButton(
+            onPressed: () => confirmLogout(context),
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+          ),
+        ],
       ),
-      body: StreamBuilder<
-          DocumentSnapshot<Map<String, dynamic>>>(
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: firestoreService.userStream(user.uid),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return const Center(
-              child: Text('Failed to load profile.'),
-            );
+            return const Center(child: Text('Failed to load profile.'));
           }
 
-          if (!snapshot.hasData ||
-              !snapshot.data!.exists) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
           }
 
+          if (snapshot.data?.exists != true) {
+            return const Center(
+              child: Text(
+                'Your profile is unavailable. Refresh or sign out using the toolbar.',
+                textAlign: TextAlign.center,
+              ),
+            );
+          }
           final data = snapshot.data!.data()!;
 
-          final farmer =
-          FarmerProfileModel.fromMap(data);
+          final farmer = FarmerProfileModel.fromMap(data);
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              ProfileHeader(
-                farmer: farmer,
-              ),
+              ProfileHeader(farmer: farmer),
 
               const SizedBox(height: 16),
 
-              FutureBuilder<String?>(
-                future: authorizedDeviceIdFuture,
+              StreamBuilder<String?>(
+                stream: authorizedDeviceIdStream,
                 builder: (context, deviceSnapshot) {
                   if (deviceSnapshot.connectionState ==
                       ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(),
-                    );
+                    return const Center(child: CircularProgressIndicator());
                   }
 
                   if (deviceSnapshot.hasError) {
@@ -418,22 +434,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     );
                   }
 
-                  final deviceId =
-                      deviceSnapshot.data ?? '';
+                  final deviceId = deviceSnapshot.data ?? '';
 
-                  return DeviceInfoCard(
-                    deviceId: deviceId,
-                  );
+                  return DeviceInfoCard(deviceId: deviceId);
                 },
               ),
 
               const SizedBox(height: 16),
 
               SettingsCard(
-                onChangePassword: () =>
-                    showChangePasswordDialog(context),
-                onRiskGuide: () =>
-                    showRiskGuideDialog(context),
+                onChangePassword: () => showChangePasswordDialog(context),
+                onRiskGuide: () => showRiskGuideDialog(context),
               ),
 
               const SizedBox(height: 16),
@@ -446,8 +457,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.danger,
                 ),
-                onPressed: () =>
-                    confirmLogout(context),
+                onPressed: () => confirmLogout(context),
                 icon: const Icon(Icons.logout),
                 label: const Text('Logout'),
               ),

@@ -9,16 +9,32 @@ class AutoModeControlCard extends StatelessWidget {
     required this.deviceOnline,
     required this.isEmergencyStop,
     required this.onChanged,
+    this.isUpdating = false,
+    this.canEnable = true,
   });
 
   final bool autoMode;
   final bool deviceOnline;
   final bool isEmergencyStop;
+  final bool isUpdating;
+  final bool canEnable;
   final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final canChangeMode = deviceOnline && !isEmergencyStop;
+    final canChangeMode =
+        deviceOnline &&
+        !isUpdating &&
+        (autoMode || (canEnable && !isEmergencyStop));
+    final blockedReason = isUpdating
+        ? 'Saving Auto Mode...'
+        : !deviceOnline
+        ? 'Auto mode cannot be changed while the farm device is offline.'
+        : !autoMode && isEmergencyStop
+        ? 'Auto mode cannot be enabled during emergency stop.'
+        : !autoMode && !canEnable
+        ? 'Auto Mode can be enabled when the device is idle and ready.'
+        : null;
 
     return Card(
       child: Padding(
@@ -59,12 +75,10 @@ class AutoModeControlCard extends StatelessWidget {
                     ),
                   ),
 
-                  if (!deviceOnline || isEmergencyStop) ...[
+                  if (blockedReason != null) ...[
                     const SizedBox(height: 8),
                     Text(
-                      !deviceOnline
-                          ? 'Auto mode cannot be changed while the farm device is offline.'
-                          : 'Auto mode cannot be changed during emergency stop.',
+                      blockedReason,
                       style: const TextStyle(
                         color: AppColors.danger,
                         fontWeight: FontWeight.w600,

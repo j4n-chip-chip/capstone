@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
 import '../../core/services/firebase_auth_service.dart';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -51,22 +52,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> handleLogin() async {
-    if (!formKey.currentState!.validate()) return;
+    if (isLoading || !formKey.currentState!.validate()) return;
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+    final remember = rememberMe;
 
     setState(() => isLoading = true);
 
     try {
-      await firebaseAuthService.login(
-        email: emailController.text.trim(),
-        password: passwordController.text,
-      );
+      await firebaseAuthService.login(email: email, password: password);
 
       final prefs = await SharedPreferences.getInstance();
 
-      await prefs.setBool('remember_me', rememberMe);
+      await prefs.setBool('remember_me', remember);
 
-      if (rememberMe) {
-        await prefs.setString('saved_email', emailController.text.trim());
+      if (remember) {
+        await prefs.setString('saved_email', email);
       } else {
         await prefs.remove('saved_email');
       }
@@ -123,11 +124,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
     await showDialog<void>(
       context: context,
-      barrierDismissible: !isSending,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
             Future<void> sendReset() async {
+              if (isSending) return;
               final email = resetEmailController.text.trim();
 
               final emailError = validateEmail(email);
@@ -202,118 +204,120 @@ class _LoginScreenState extends State<LoginScreen> {
               }
             }
 
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
-              titlePadding: EdgeInsets.zero,
-              title: Container(
-                padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
-                decoration: const BoxDecoration(
-                  color: AppColors.lightGreen,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(24),
-                    topRight: Radius.circular(24),
+            return PopScope(
+              canPop: !isSending,
+              child: AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                titlePadding: EdgeInsets.zero,
+                title: Container(
+                  padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+                  decoration: const BoxDecoration(
+                    color: AppColors.lightGreen,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(24),
+                      topRight: Radius.circular(24),
+                    ),
                   ),
-                ),
-                child: const Row(
-                  children: [
-                    CircleAvatar(
-                      backgroundColor: Colors.white,
-                      child: Icon(
-                        Icons.lock_reset_rounded,
-                        color: AppColors.primaryGreen,
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Reset Your Password',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Enter the email address associated with your BananaDoctor account.',
-                      style: TextStyle(
-                        color: AppColors.textDark,
-                        height: 1.4,
-                      ),
-                    ),
-
-                    const SizedBox(height: 8),
-
-                    const Text(
-                      'If an account is registered with that address, we will send a secure password reset link.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textLight,
-                        height: 1.4,
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    TextField(
-                      controller: resetEmailController,
-                      keyboardType: TextInputType.emailAddress,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) {
-                        if (!isSending) {
-                          sendReset();
-                        }
-                      },
-                      decoration: InputDecoration(
-                        labelText: 'Registered email',
-                        prefixIcon: const Icon(
-                          Icons.email_outlined,
+                  child: const Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.white,
+                        child: Icon(
+                          Icons.lock_reset_rounded,
                           color: AppColors.primaryGreen,
                         ),
-                        filled: true,
-                        fillColor: AppColors.background,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Reset Your Password',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textDark,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              actions: [
-                TextButton(
-                  onPressed:
-                  isSending ? null : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: isSending ? null : sendReset,
-                  icon: isSending
-                      ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                      : const Icon(Icons.send_outlined),
-                  label: Text(
-                    isSending ? 'Sending...' : 'Send Reset Link',
+                    ],
                   ),
                 ),
-              ],
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Enter the email address associated with your BananaDoctor account.',
+                        style: TextStyle(
+                          color: AppColors.textDark,
+                          height: 1.4,
+                        ),
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      const Text(
+                        'If an account is registered with that address, we will send a secure password reset link.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textLight,
+                          height: 1.4,
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      TextField(
+                        controller: resetEmailController,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) {
+                          if (!isSending) {
+                            sendReset();
+                          }
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Registered email',
+                          prefixIcon: const Icon(
+                            Icons.email_outlined,
+                            color: AppColors.primaryGreen,
+                          ),
+                          filled: true,
+                          fillColor: AppColors.background,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                actions: [
+                  TextButton(
+                    onPressed: isSending
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: isSending ? null : sendReset,
+                    icon: isSending
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_outlined),
+                    label: Text(isSending ? 'Sending...' : 'Send Reset Link'),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -328,24 +332,26 @@ class _LoginScreenState extends State<LoginScreen> {
     final createEmailController = TextEditingController();
     final createPasswordController = TextEditingController();
 
+    final messenger = ScaffoldMessenger.of(context);
     bool isCreating = false;
     bool obscureNewPassword = true;
 
     await showDialog<void>(
       context: context,
-      barrierDismissible: !isCreating,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
             Future<void> createAccount() async {
+              if (isCreating) return;
               final name = createNameController.text.trim();
               final email = createEmailController.text.trim();
               final password = createPasswordController.text;
 
               void showError(String message) {
-                if (!mounted) return;
+                if (!dialogContext.mounted) return;
 
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   SnackBar(
                     content: Text(message),
                     backgroundColor: AppColors.danger,
@@ -379,21 +385,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   password: password,
                 );
 
-                if (!mounted) return;
+                if (!dialogContext.mounted) return;
 
                 FocusManager.instance.primaryFocus?.unfocus();
                 if (dialogContext.mounted) {
                   Navigator.of(dialogContext).pop();
                 }
 
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   const SnackBar(
                     content: Text('Account created successfully.'),
                     backgroundColor: AppColors.primaryGreen,
                   ),
                 );
               } on FirebaseAuthException catch (e) {
-                if (!mounted) return;
+                if (!dialogContext.mounted) return;
 
                 if (dialogContext.mounted) {
                   setDialogState(() => isCreating = false);
@@ -415,7 +421,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 showError(message);
               } catch (_) {
-                if (!mounted) return;
+                if (!dialogContext.mounted) return;
 
                 if (dialogContext.mounted) {
                   setDialogState(() => isCreating = false);
@@ -427,73 +433,76 @@ class _LoginScreenState extends State<LoginScreen> {
               }
             }
 
-            return AlertDialog(
-              title: const Text('Create Farmer Account'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: createNameController,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.person_outline),
-                        hintText: 'Full name',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: createEmailController,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.email_outlined),
-                        hintText: 'Email address',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: createPasswordController,
-                      obscureText: obscureNewPassword,
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        hintText: 'Password',
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            obscureNewPassword
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
-                          ),
-                          onPressed: () {
-                            setDialogState(() {
-                              obscureNewPassword = !obscureNewPassword;
-                            });
-                          },
+            return PopScope(
+              canPop: !isCreating,
+              child: AlertDialog(
+                title: const Text('Create Farmer Account'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: createNameController,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.person_outline),
+                          hintText: 'Full name',
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: isCreating
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: isCreating ? null : createAccount,
-                  child: isCreating
-                      ? const SizedBox(
-                          height: 18,
-                          width: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: createEmailController,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.email_outlined),
+                          hintText: 'Email address',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: createPasswordController,
+                        obscureText: obscureNewPassword,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          hintText: 'Password',
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscureNewPassword
+                                  ? Icons.visibility_off_outlined
+                                  : Icons.visibility_outlined,
+                            ),
+                            onPressed: () {
+                              setDialogState(() {
+                                obscureNewPassword = !obscureNewPassword;
+                              });
+                            },
                           ),
-                        )
-                      : const Text('Create Account'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+                actions: [
+                  TextButton(
+                    onPressed: isCreating
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: isCreating ? null : createAccount,
+                    child: isCreating
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Create Account'),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -540,10 +549,7 @@ class _LoginScreenState extends State<LoginScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  AppColors.darkGreen,
-                  AppColors.primaryGreen,
-                ],
+                colors: [AppColors.darkGreen, AppColors.primaryGreen],
               ),
             ),
           ),
@@ -784,10 +790,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                       onChanged: isLoading
                                           ? null
                                           : (value) {
-                                        setState(() {
-                                          rememberMe = value ?? false;
-                                        });
-                                      },
+                                              setState(() {
+                                                rememberMe = value ?? false;
+                                              });
+                                            },
                                     ),
                                     const Text(
                                       'Remember me',
@@ -803,13 +809,12 @@ class _LoginScreenState extends State<LoginScreen> {
                               const Spacer(),
 
                               TextButton(
-                                onPressed:
-                                isLoading ? null : showForgotPasswordDialog,
+                                onPressed: isLoading
+                                    ? null
+                                    : showForgotPasswordDialog,
                                 child: const Text(
                                   'Forgot password?',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  style: TextStyle(fontWeight: FontWeight.w600),
                                 ),
                               ),
                             ],
@@ -832,30 +837,31 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               child: isLoading
                                   ? const SizedBox(
-                                height: 22,
-                                width: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
+                                      height: 22,
+                                      width: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
                                   : const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Sign In',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          'Sign In',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        SizedBox(width: 8),
+                                        Icon(
+                                          Icons.arrow_forward_rounded,
+                                          size: 20,
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  SizedBox(width: 8),
-                                  Icon(
-                                    Icons.arrow_forward_rounded,
-                                    size: 20,
-                                  ),
-                                ],
-                              ),
                             ),
                           ),
 
@@ -865,8 +871,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             children: [
                               Expanded(
                                 child: Divider(
-                                  color:
-                                  AppColors.textLight.withValues(alpha: 0.25),
+                                  color: AppColors.textLight.withValues(
+                                    alpha: 0.25,
+                                  ),
                                 ),
                               ),
                               const Padding(
@@ -883,8 +890,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               Expanded(
                                 child: Divider(
-                                  color:
-                                  AppColors.textLight.withValues(alpha: 0.25),
+                                  color: AppColors.textLight.withValues(
+                                    alpha: 0.25,
+                                  ),
                                 ),
                               ),
                             ],
@@ -895,8 +903,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: OutlinedButton.icon(
-                              onPressed:
-                              isLoading ? null : showCreateAccountDialog,
+                              onPressed: isLoading
+                                  ? null
+                                  : showCreateAccountDialog,
                               icon: const Icon(Icons.person_add_alt_1_outlined),
                               label: const Text('Create Farmer Account'),
                               style: OutlinedButton.styleFrom(
@@ -904,8 +913,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 side: const BorderSide(
                                   color: AppColors.primaryGreen,
                                 ),
-                                padding:
-                                const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),
                                 ),
