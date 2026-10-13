@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/device_heartbeat.dart';
 import '../utils/rtdb_value_parser.dart';
 import '../utils/sprayer_safety.dart';
+import '../utils/stream_for_each_listener.dart';
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -32,8 +33,8 @@ class RealtimeDatabaseService {
 
   void invalidateCommandSession() => _submissions.invalidateSession();
 
-  Stream<DatabaseEvent> _cached(String key, Query query) =>
-      _streams.putIfAbsent(key, () => query.onValue);
+  Stream<DatabaseEvent> _cached(String key, Query query) => _streams
+      .putIfAbsent(key, () => streamForEachListener(() => query.onValue));
 
   void clearStreamCache() {
     _streams.clear();

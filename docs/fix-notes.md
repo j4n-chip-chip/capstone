@@ -23,7 +23,9 @@ Implemented changes:
   scores, and out-of-range dates. Missing risk data is `UNKNOWN`, and the risk
   card displays an unavailable score rather than reassuring `LOW / 0` data.
   Valid zero scores remain distinguishable from missing data.
-- Device assignment is observed continuously. Reused stream objects avoid
+- Device assignment is observed continuously. Cached stream wrappers create
+  an independent Firebase subscription for every listener, including remounted
+  tabs and one-shot connection checks. Stable wrapper identities avoid
   subscription churn during timer rebuilds. Environmental history is ordered by
   timestamp before selecting the latest 20 records.
 - Logout has a bounded token-cleanup wait. Foreground alerts are suppressed
@@ -42,6 +44,7 @@ Run the production-logic regression checks with the Dart SDK:
 
 ```sh
 dart test/edge_cases.dart
+dart test/stream_edge_cases.dart
 ```
 
 Run widget regressions after restoring the original Flutter project manifest,
@@ -59,13 +62,31 @@ and widget checks in an inferred-manifest validation project cannot certify the
 original application's dependency versions, native configuration, backend
 permissions, or physical sprayer behavior.
 
-Checks executed for this change: 80 standalone edge cases passed with Dart
-3.13.5; source/test analysis reported no issues and six widget edge cases passed
-with Flutter 3.44.0 / Dart 3.12.0 in a separate project with inferred dependencies.
+Checks executed for this change: 80 standalone logic edge cases and 10 stream
+edge cases passed with Dart 3.13.5; source/test analysis reported no issues and
+nine widget edge cases passed with Flutter 3.44.0 / Dart 3.12.0 in a separate
+project with inferred dependencies.
 That validation resolved firebase_core 4.15.0, firebase_auth 6.7.0,
 cloud_firestore 6.10.0, firebase_database 12.6.0, firebase_messaging 16.7.0,
 flutter_local_notifications 22.3.2, shared_preferences 2.5.6, and fl_chart 1.2.0.
 No production Firebase endpoint or physical sprayer was exercised.
+
+### 🚨 [Bug Severity: High] - Cached streams crash with multiple screen listeners
+
+* **The Problem:** The previous fix cached raw Firebase streams. Native database
+  streams can accept only one subscription, while the app shell and its screens
+  all listen to the cached assignment, alert, and command streams. Subsequent
+  listeners throw `Bad state: Stream has already been listened to`.
+* **The Impact:** Multiple screens fail to render. Reopening a view or checking
+  the connection before a command can also attempt to reuse a consumed stream.
+* **The Fix:** Cache `streamForEachListener(() => query.onValue)` in
+  `RealtimeDatabaseService` and
+  `streamForEachListener(() => users.doc(userId).snapshots())` in
+  `FirestoreService`. The helper calls the Firebase getter separately for each
+  subscription, forwards data/errors/completion, and cancels only that listener's
+  source. Each listener receives Firebase's initial snapshot without waiting for
+  another write. Stream and widget regressions cover simultaneous listeners,
+  remounts, connection checks, independent cancellation, and error recovery.
 
 ### 🚨 [Bug Severity: High] - Cross-client command arbitration remains unresolved
 * **The Problem:** Client validation and atomic publication cannot serialize two
