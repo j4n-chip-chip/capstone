@@ -14,8 +14,11 @@ Implemented changes:
 - Command submissions reject invalid durations/cycle counts, pending work,
   unavailable safety state, cooldown, and emergency state. The service rereads
   account assignment and device state before publishing. Local duplicate starts
-  are blocked, emergency stop remains accessible during telemetry errors, and
-  command history plus `active_command` are published in one atomic update.
+  are blocked, and command history plus `active_command` are published in one
+  atomic update. The Emergency Stop button is hidden when the app is disconnected
+  or the device heartbeat is unavailable, offline, or expired. Confirming a dialog
+  after connectivity is lost is blocked too. With a live device connection,
+  emergency stop remains available when normal sprayer telemetry fails.
 - Client-side deletion of command, alert, and sensor history is removed.
   Command views explicitly request the latest 50 commands. Unread alerts remain
   available; no arbitrary alert limit hides old unread warnings.
@@ -62,7 +65,7 @@ and widget checks in an inferred-manifest validation project cannot certify the
 original application's dependency versions, native configuration, backend
 permissions, or physical sprayer behavior.
 
-Checks executed for this change: 80 standalone logic edge cases and 10 stream
+Checks executed for this change: 82 standalone logic edge cases and 10 stream
 edge cases passed with Dart 3.13.5; source/test analysis reported no issues and
 nine widget edge cases passed with Flutter 3.44.0 / Dart 3.12.0 in a separate
 project with inferred dependencies.

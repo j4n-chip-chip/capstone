@@ -356,59 +356,69 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
           latestActiveCommand = {};
           commandStateKnown = false;
         }
-        return Scaffold(
-          floatingActionButton: FloatingActionButton.extended(
-            backgroundColor: AppColors.danger,
-            foregroundColor: Colors.white,
-            onPressed: stopInFlight
-                ? null
-                : () => confirmEmergencyStop(deviceId),
-            icon: const Icon(Icons.stop_circle_outlined),
-            label: const Text('Emergency Stop'),
-          ),
-          body: StreamBuilder(
-            stream: realtimeDatabaseService.connectionStream,
-            builder: (context, connectionSnapshot) {
-              appConnected = connectionSnapshot.data?.snapshot.value == true;
-              return StreamBuilder(
-                stream: realtimeDatabaseService.heartbeatStream(deviceId),
-                builder: (context, heartbeatSnapshot) {
-                  if (heartbeatSnapshot.hasError) {
-                    return const Scaffold(
-                      body: Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            'Unable to check the farm device connection. '
-                            'Check your internet connection and try again.',
-                            textAlign: TextAlign.center,
-                          ),
+        return StreamBuilder(
+          stream: realtimeDatabaseService.connectionStream,
+          builder: (context, connectionSnapshot) {
+            appConnected =
+                !connectionSnapshot.hasError &&
+                connectionSnapshot.connectionState == ConnectionState.active &&
+                connectionSnapshot.data?.snapshot.value == true;
+            return StreamBuilder(
+              stream: realtimeDatabaseService.heartbeatStream(deviceId),
+              builder: (context, heartbeatSnapshot) {
+                if (heartbeatSnapshot.hasError) {
+                  latestHeartbeatData = {};
+                  return const Scaffold(
+                    body: Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          'Unable to check the farm device connection. '
+                          'Check your internet connection and try again.',
+                          textAlign: TextAlign.center,
                         ),
                       ),
-                    );
-                  }
-
-                  if (heartbeatSnapshot.connectionState ==
-                      ConnectionState.waiting) {
-                    return const Scaffold(
-                      body: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-
-                  final heartbeatData = readRtdbMap(
-                    heartbeatSnapshot.data?.snapshot.value,
+                    ),
                   );
+                }
 
-                  latestHeartbeatData = heartbeatData;
-
-                  final deviceOnline = isDeviceHeartbeatAlive(
-                    heartbeatData,
-                    deviceId: deviceId,
+                if (heartbeatSnapshot.connectionState ==
+                    ConnectionState.waiting) {
+                  latestHeartbeatData = {};
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
                   );
+                }
 
-                  final lastHeartbeat = formatLastHeartbeat(heartbeatData);
+                final heartbeatData = readRtdbMap(
+                  heartbeatSnapshot.data?.snapshot.value,
+                );
 
-                  return StreamBuilder(
+                latestHeartbeatData =
+                    heartbeatSnapshot.connectionState == ConnectionState.active
+                    ? heartbeatData
+                    : {};
+
+                final deviceOnline = isDeviceHeartbeatAlive(
+                  latestHeartbeatData,
+                  deviceId: deviceId,
+                );
+
+                final lastHeartbeat = formatLastHeartbeat(heartbeatData);
+
+                return Scaffold(
+                  floatingActionButton: deviceOnline && appConnected
+                      ? FloatingActionButton.extended(
+                          backgroundColor: AppColors.danger,
+                          foregroundColor: Colors.white,
+                          onPressed: stopInFlight
+                              ? null
+                              : () => confirmEmergencyStop(deviceId),
+                          icon: const Icon(Icons.stop_circle_outlined),
+                          label: const Text('Emergency Stop'),
+                        )
+                      : null,
+                  body: StreamBuilder(
                     stream: realtimeDatabaseService.statusStream(deviceId),
 
                     builder: (context, statusSnapshot) {
@@ -825,11 +835,11 @@ class _SprayerControlScreenState extends State<SprayerControlScreen> {
                         },
                       );
                     },
-                  );
-                },
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );

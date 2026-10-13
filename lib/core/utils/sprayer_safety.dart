@@ -15,8 +15,8 @@ String? sprayerCommandBlockReason({
 }) {
   if (!connected)
     return 'The app is offline. Reconnect before sending a command.';
-  if (command == 'EMERGENCY_STOP') return null;
   if (!heartbeatAlive) return 'Waiting for a fresh farm-device heartbeat.';
+  if (command == 'EMERGENCY_STOP') return null;
   if (!commandStateKnown) return 'The current command state is unavailable.';
   if (hasBusyCommand(activeCommand))
     return 'A sprayer command is already pending or running.';

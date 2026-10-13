@@ -410,7 +410,6 @@ Future<void> main() async {
     expect(
       blocked(
             command: 'EMERGENCY_STOP',
-            alive: false,
             status: {},
             known: false,
             active: {'status': 'RUNNING'},
@@ -419,6 +418,36 @@ Future<void> main() async {
       'Normal safety gates prevented emergency stop.',
     );
   });
+  await edge(
+    'Emergency stop cannot be submitted after the device goes offline',
+    () {
+      expect(
+        blocked(command: 'EMERGENCY_STOP', alive: false) != null,
+        'A confirmation opened while online allowed an offline stop.',
+      );
+    },
+  );
+  await edge(
+    'An expired heartbeat blocks emergency-stop confirmation',
+    () async {
+      const timeout = Duration(milliseconds: 5);
+      isDeviceHeartbeatAlive(heartbeat(500), deviceId: 'A', timeout: timeout);
+      isDeviceHeartbeatAlive(heartbeat(501), deviceId: 'A', timeout: timeout);
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(
+        blocked(
+              command: 'EMERGENCY_STOP',
+              alive: isDeviceHeartbeatAlive(
+                heartbeat(501),
+                deviceId: 'A',
+                timeout: timeout,
+              ),
+            ) !=
+            null,
+        'A stale cached heartbeat allowed emergency-stop confirmation.',
+      );
+    },
+  );
   await edge('Reset is blocked outside an emergency stop', () {
     expect(
       blocked(command: 'RESET_SYSTEM') != null,
